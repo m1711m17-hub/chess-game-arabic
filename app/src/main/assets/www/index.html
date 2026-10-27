@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>شطرنج</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1b1b1f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="شطرنج">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root{
+    --light:#f0d9b5; --dark:#b58863;
+    --sel:#f6f669aa; --move:#6cae55cc; --cap:#e05858cc; --last:#f7e96899;
+    --bg:#1b1b1f; --panel:#262630; --panel2:#2f2f3a; --text:#eee; --muted:#9a9aa5;
+    --accent:#4f8cff;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%; margin:0; overscroll-behavior:none;}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    padding:env(safe-area-inset-top) 10px env(safe-area-inset-bottom);
+    min-height:100%;
+    user-select:none;
+  }
+  h1{font-size:1.1rem; margin:10px 0 6px; color:var(--text); font-weight:600;}
+  .topbar{width:100%; max-width:480px; display:flex; justify-content:space-between; align-items:center; margin:4px 0;}
+  .status{font-size:.95rem; color:var(--muted); min-height:1.3em; text-align:center; width:100%; max-width:480px; margin:2px 0 8px;}
+  .status.check{color:#ff7272; font-weight:700;}
+  .status.over{color:#ffd166; font-weight:700;}
+
+  #board-wrap{position:relative; width:min(94vw,480px); aspect-ratio:1/1; margin:4px auto;}
+  #board{
+    display:grid; grid-template-columns:repeat(8,1fr); grid-template-rows:repeat(8,1fr);
+    width:100%; height:100%; border-radius:6px; overflow:hidden;
+    box-shadow:0 6px 24px #0007;
+  }
+  .sq{position:relative; display:flex; align-items:center; justify-content:center;}
+  .sq.light{background:var(--light);}
+  .sq.dark{background:var(--dark);}
+  .sq .piece{font-size:min(9.5vw,46px); line-height:1; cursor:grab; transition:transform .08s; z-index:3;}
+  .sq .piece.white{color:#fdfdfd; text-shadow:0 1px 2px #0008, 0 0 1px #000;}
+  .sq .piece.black{color:#1a1a1a; text-shadow:0 1px 1px #fff5;}
+  .sq.selected::before{content:"";position:absolute;inset:0;background:var(--sel);}
+  .sq.lastmove::before{content:"";position:absolute;inset:0;background:var(--last);}
+  .sq .dot{position:absolute; width:28%; height:28%; border-radius:50%; background:var(--move); z-index:2;}
+  .sq .ring{position:absolute; inset:5%; border-radius:50%; border:5px solid var(--cap); z-index:2;}
+  .sq.king-check::after{content:"";position:absolute;inset:0;background:radial-gradient(circle,#ff3b3baa,transparent 70%);}
+  .coord{position:absolute; font-size:9px; opacity:.55; pointer-events:none; z-index:1;}
+  .coord.file{bottom:2px; left:3px;}
+  .coord.rank{top:2px; right:3px;}
+  .sq.light .coord{color:var(--dark);}
+  .sq.dark .coord{color:var(--light);}
+
+  .controls{width:min(94vw,480px); display:flex; gap:8px; margin:10px 0; flex-wrap:wrap; justify-content:center;}
+  button{
+    background:var(--panel2); color:var(--text); border:none; border-radius:10px;
+    padding:10px 16px; font-size:.95rem; cursor:pointer; flex:1; min-width:90px;
+  }
+  button:active{background:var(--accent);}
+  button.primary{background:var(--accent); color:#fff;}
+
+  .panel{width:min(94vw,480px); background:var(--panel); border-radius:12px; padding:10px 14px; margin-bottom:12px;}
+  .panel h2{font-size:.85rem; color:var(--muted); margin:0 0 6px; font-weight:600;}
+  #history{display:flex; flex-wrap:wrap; gap:4px 10px; font-size:.9rem; max-height:110px; overflow-y:auto;}
+  #history .mv{color:var(--text);}
+  #history .num{color:var(--muted);}
+
+  .overlay{position:fixed; inset:0; background:#000a; display:none; align-items:center; justify-content:center; z-index:50;}
+  .overlay.show{display:flex;}
+  .modal{background:var(--panel); border-radius:14px; padding:20px; width:min(88vw,360px); text-align:center;}
+  .modal h3{margin:0 0 14px; font-size:1.05rem;}
+  .promo-row{display:flex; gap:10px; justify-content:center; margin:10px 0;}
+  .promo-row .piece{font-size:38px; background:var(--panel2); border-radius:10px; padding:6px 10px; cursor:pointer;}
+  .menu-row{display:flex; flex-direction:column; gap:10px; margin-top:8px;}
+  .seg{display:flex; background:var(--panel2); border-radius:10px; overflow:hidden; margin-top:6px;}
+  .seg button{border-radius:0; margin:0; flex:1;}
+  .seg button.active{background:var(--accent); color:#fff;}
+  .modal p{color:var(--muted); font-size:.9rem; margin:4px 0 12px;}
+</style>
+</head>
+<body>
+
+<h1>♟ شطرنج</h1>
+<div class="status" id="status">اختر مستوى اللعب للبدء</div>
+
+<div id="board-wrap">
+  <div id="board"></div>
+</div>
+
+<div class="controls">
+  <button id="btnUndo">↩ تراجع</button>
+  <button id="btnFlip">⟲ قلب اللوحة</button>
+  <button id="btnNew" class="primary">♟ لعبة جديدة</button>
+</div>
+
+<div class="panel">
+  <h2>سجل النقلات</h2>
+  <div id="history">—</div>
+</div>
+
+<!-- New game / difficulty modal -->
+<div class="overlay" id="menuOverlay">
+  <div class="modal">
+    <h3>لعبة جديدة</h3>
+    <p>اختر مستوى الخصم (الكمبيوتر)</p>
+    <div class="seg" id="diffSeg">
+      <button data-d="1">سهل</button>
+      <button data-d="2" class="active">متوسط</button>
+      <button data-d="3">صعب</button>
+      <button data-d="4">خبير</button>
+    </div>
+    <p style="margin-top:14px">العب بـ:</p>
+    <div class="seg" id="colorSeg">
+      <button data-c="w" class="active">الأبيض</button>
+      <button data-c="b">الأسود</button>
+      <button data-c="x">عشوائي</button>
+    </div>
+    <div class="menu-row">
+      <button class="primary" id="btnStart">ابدأ اللعب</button>
+    </div>
+  </div>
+</div>
+
+<!-- Promotion modal -->
+<div class="overlay" id="promoOverlay">
+  <div class="modal">
+    <h3>اختر الترقية</h3>
+    <div class="promo-row" id="promoRow"></div>
+  </div>
+</div>
+
+<!-- Game over modal -->
+<div class="overlay" id="overOverlay">
+  <div class="modal">
+    <h3 id="overTitle">انتهت اللعبة</h3>
+    <p id="overDesc"></p>
+    <div class="menu-row">
+      <button class="primary" id="btnPlayAgain">لعبة جديدة</button>
+      <button id="btnClose">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script>
+(function(){
+  'use strict';
+  var E = ChessEngine;
+  var PIECE_CH = { p:'♟', n:'♞', b:'♝', r:'♜', q:'♛', k:'♚' };
+
+  var state, history, selected, legalForSel, lastMove, flipped, humanColor, aiDepth, aiThinking;
+  var DIFFS = { 1:{depth:2,time:400,noise:40}, 2:{depth:3,time:700,noise:15}, 3:{depth:4,time:1200,noise:0}, 4:{depth:5,time:2200,noise:0} };
+
+  var boardEl = document.getElementById('board');
+  var statusEl = document.getElementById('status');
+  var historyEl = document.getElementById('history');
+
+  function sqIndex(r,c){ return r*8+c; }
+
+  function buildBoard(){
+    boardEl.innerHTML = '';
+    for (var r=0;r<8;r++){
+      for (var c=0;c<8;c++){
+        var disp = flipped ? [7-r,7-c] : [r,c];
+        var sq = document.createElement('div');
+        var idx = sqIndex(disp[0], disp[1]);
+        sq.className = 'sq ' + (((disp[0]+disp[1])%2===0) ? 'light':'dark');
+        sq.dataset.sq = idx;
+        sq.addEventListener('click', onSquareClick);
+        if (disp[1] === (flipped?7:0)) {
+          var rc = document.createElement('div'); rc.className='coord rank'; rc.textContent = 8-disp[0]; sq.appendChild(rc);
+        }
+        if (disp[0] === (flipped?0:7)) {
+          var fc = document.createElement('div'); fc.className='coord file'; fc.textContent = 'abcdefgh'[disp[1]]; sq.appendChild(fc);
+        }
+        boardEl.appendChild(sq);
+      }
+    }
+  }
+
+  function render(){
+    var cells = boardEl.children;
+    for (var i=0;i<64;i++){
+      var sq = null;
+      for (var j=0;j<cells.length;j++){ if (+cells[j].dataset.sq === i){ sq = cells[j]; break; } }
+    }
+    // faster: build map once
+    var map = {};
+    for (var k=0;k<cells.length;k++) map[cells[k].dataset.sq] = cells[k];
+
+    var st = E.status(state);
+    var kingSq = -1;
+    if (!st.over && E.inCheck(state)) {
+      kingSq = state.board.indexOf(state.turn==='w'?'K':'k');
+    }
+
+    for (i=0;i<64;i++){
+      var el = map[i];
+      // clear dynamic bits but keep coord labels
+      var coords = el.querySelectorAll('.coord');
+      el.className = 'sq ' + ((( (i>>3)+(i&7) )%2===0) ? 'light':'dark');
+      el.innerHTML='';
+      coords.forEach(function(cEl){ el.appendChild(cEl); });
+
+      if (lastMove && (i===lastMove.from || i===lastMove.to)) el.classList.add('lastmove');
+      if (selected !== null && i===selected) el.classList.add('selected');
+      if (i===kingSq) el.classList.add('king-check');
+
+      var p = state.board[i];
+      if (p){
+        var span = document.createElement('div');
+        span.className = 'piece ' + (E.colorOf(p)==='w'?'white':'black');
+        span.textContent = PIECE_CH[p.toLowerCase()];
+        el.appendChild(span);
+      }
+      if (legalForSel){
+        var mv = legalForSel.filter(function(m){ return m.to===i; })[0];
+        if (mv){
+          var marker = document.createElement('div');
+          marker.className = state.board[i] || mv.flag==='ep' ? 'ring' : 'dot';
+          el.appendChild(marker);
+        }
+      }
+    }
+    renderHistory();
+    renderStatus(st);
+  }
+
+  function renderStatus(st){
+    statusEl.className = 'status';
+    if (st.over){
+      statusEl.classList.add('over');
+      statusEl.textContent = overText(st);
+      showOver(st);
+      return;
+    }
+    var turnTxt = state.turn==='w' ? 'الأبيض' : 'الأسود';
+    var who = state.turn===humanColor ? 'دورك' : 'دور الكمبيوتر';
+    if (E.inCheck(state)){
+      statusEl.classList.add('check');
+      statusEl.textContent = 'كش! دور ' + turnTxt + ' (' + who + ')';
+    } else if (aiThinking) {
+      statusEl.textContent = 'الكمبيوتر يفكر...';
+    } else {
+      statusEl.textContent = 'دور ' + turnTxt + ' — ' + who;
+    }
+  }
+
+  function overText(st){
+    if (st.type==='checkmate') return 'كش ملك! فاز ' + (st.winner==='w'?'الأبيض':'الأسود');
+    if (st.type==='stalemate') return 'تعادل — بات (لا نقلات ممكنة)';
+    if (st.type==='insufficient') return 'تعادل — مواد غير كافية';
+    if (st.type==='fifty') return 'تعادل — قاعدة الخمسين نقلة';
+    return 'انتهت اللعبة';
+  }
+
+  function renderHistory(){
+    if (!history.length){ historyEl.innerHTML = '—'; return; }
+    var html = '';
+    for (var i=0;i<history.length;i+=2){
+      var num = (i/2)+1;
+      html += '<span class="num">'+num+'.</span> <span class="mv">'+history[i]+'</span>';
+      if (history[i+1]) html += ' <span class="mv">'+history[i+1]+'</span>';
+    }
+    historyEl.innerHTML = html;
+    historyEl.scrollTop = historyEl.scrollHeight;
+  }
+
+  function onSquareClick(e){
+    if (aiThinking) return;
+    var idx = +e.currentTarget.dataset.sq;
+    var st = E.status(state);
+    if (st.over) return;
+    if (state.turn !== humanColor) return;
+
+    var piece = state.board[idx];
+    if (selected !== null){
+      var mv = legalForSel && legalForSel.filter(function(m){ return m.to===idx; })[0];
+      if (mv){
+        doMove(mv);
+        return;
+      }
+    }
+    if (piece && E.colorOf(piece) === state.turn){
+      selected = idx;
+      legalForSel = E.legalMoves(state).filter(function(m){ return m.from===idx; });
+      render();
+    } else {
+      selected = null; legalForSel = null; render();
+    }
+  }
+
+  function doMove(mv){
+    if (mv.promo === undefined){
+      var piece = state.board[mv.from];
+      var isPromo = piece && piece.toLowerCase()==='p' && (mv.to>>3===0 || mv.to>>3===7);
+      if (isPromo){
+        var candidates = legalForSel.filter(function(m){ return m.to===mv.to; });
+        if (candidates.length>1){
+          askPromotion(function(p){
+            var chosen = candidates.filter(function(m){ return m.promo===p; })[0];
+            commitMove(chosen);
+          });
+          return;
+        }
+      }
+    }
+    commitMove(mv);
+  }
+
+  function commitMove(mv){
+    var san = E.toSAN(state, mv);
+    state = E.applyMove(state, mv);
+    history.push(san);
+    lastMove = mv;
+    selected = null; legalForSel = null;
+    render();
+    maybeAIMove();
+  }
+
+  function askPromotion(cb){
+    var overlay = document.getElementById('promoOverlay');
+    var row = document.getElementById('promoRow');
+    row.innerHTML = '';
+    ['q','r','b','n'].forEach(function(p){
+      var d = document.createElement('div');
+      d.className = 'piece';
+      d.textContent = PIECE_CH[p];
+      d.style.color = humanColor==='w' ? '#fdfdfd':'#1a1a1a';
+      d.onclick = function(){ overlay.classList.remove('show'); cb(p); };
+      row.appendChild(d);
+    });
+    overlay.classList.add('show');
+  }
+
+  function maybeAIMove(){
+    var st = E.status(state);
+    if (st.over) return;
+    if (state.turn === humanColor) return;
+    aiThinking = true;
+    renderStatus(st);
+    setTimeout(function(){
+      var cfg = DIFFS[aiDepth];
+      var mv = E.bestMove(state, cfg);
+      aiThinking = false;
+      if (!mv) { render(); return; }
+      var san = E.toSAN(state, mv);
+      state = E.applyMove(state, mv);
+      history.push(san);
+      lastMove = mv;
+      render();
+    }, 50);
+  }
+
+  function showOver(st){
+    var overlay = document.getElementById('overOverlay');
+    if (overlay.classList.contains('show')) return;
+    document.getElementById('overDesc').textContent = overText(st);
+    overlay.classList.add('show');
+  }
+
+  function newGame(){
+    state = E.initialState();
+    history = [];
+    selected = null; legalForSel = null; lastMove = null; aiThinking=false;
+    flipped = humanColor === 'b';
+    buildBoard();
+    render();
+    maybeAIMove();
+  }
+
+  // ---- menu wiring ----
+  var diffSeg = document.getElementById('diffSeg');
+  var colorSeg = document.getElementById('colorSeg');
+  var chosenDiff = 2, chosenColor = 'w';
+
+  diffSeg.addEventListener('click', function(e){
+    if (e.target.tagName!=='BUTTON') return;
+    Array.prototype.forEach.call(diffSeg.children, function(b){ b.classList.remove('active'); });
+    e.target.classList.add('active');
+    chosenDiff = +e.target.dataset.d;
+  });
+  colorSeg.addEventListener('click', function(e){
+    if (e.target.tagName!=='BUTTON') return;
+    Array.prototype.forEach.call(colorSeg.children, function(b){ b.classList.remove('active'); });
+    e.target.classList.add('active');
+    chosenColor = e.target.dataset.c;
+  });
+
+  document.getElementById('btnStart').addEventListener('click', function(){
+    aiDepth = chosenDiff;
+    humanColor = chosenColor==='x' ? (Math.random()<0.5?'w':'b') : chosenColor;
+    document.getElementById('menuOverlay').classList.remove('show');
+    document.getElementById('overOverlay').classList.remove('show');
+    newGame();
+  });
+
+  document.getElementById('btnNew').addEventListener('click', function(){
+    document.getElementById('menuOverlay').classList.add('show');
+  });
+  document.getElementById('btnPlayAgain').addEventListener('click', function(){
+    document.getElementById('overOverlay').classList.remove('show');
+    document.getElementById('menuOverlay').classList.add('show');
+  });
+  document.getElementById('btnClose').addEventListener('click', function(){
+    document.getElementById('overOverlay').classList.remove('show');
+  });
+
+  document.getElementById('btnFlip').addEventListener('click', function(){
+    flipped = !flipped;
+    buildBoard();
+    render();
+  });
+
+  document.getElementById('btnUndo').addEventListener('click', function(){
+    if (aiThinking || !history.length) return;
+    // undo last human+ai pair (or single if only one made)
+    var movesToUndo = (history.length % 2 === 0) ? 2 : 1;
+    // Rebuild from scratch since we don't keep a stack of states (simplicity & correctness)
+    var sans = history.slice(0, Math.max(0, history.length - movesToUndo));
+    rebuildFromSAN(sans);
+  });
+
+  function rebuildFromSAN(sanList){
+    var s = E.initialState();
+    var h = [];
+    var lm = null;
+    for (var i=0;i<sanList.length;i++){
+      var moves = E.legalMoves(s);
+      var found = null;
+      for (var j=0;j<moves.length;j++){
+        if (E.toSAN(s, moves[j]) === sanList[i]) { found = moves[j]; break; }
+      }
+      if (!found) break;
+      lm = found;
+      s = E.applyMove(s, found);
+      h.push(sanList[i]);
+    }
+    state = s; history = h; lastMove = lm;
+    selected = null; legalForSel = null;
+    render();
+  }
+
+  // initial: show menu
+  state = E.initialState(); history=[]; selected=null; legalForSel=null; lastMove=null;
+  flipped = false; humanColor='w'; aiDepth=2; aiThinking=false;
+  buildBoard(); render();
+  document.getElementById('menuOverlay').classList.add('show');
+
+})();
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  });
+}
+</script>
+</body>
+</html>
