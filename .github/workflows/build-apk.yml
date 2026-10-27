@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,14 +22,10 @@ jobs:
 
       - name: Accept Android SDK licenses & install platform/build-tools
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           SDKMANAGER=$(find "$ANDROID_HOME" "$ANDROID_SDK_ROOT" /usr/local/lib/android/sdk -name sdkmanager -type f 2>/dev/null | sort -r | head -1)
           echo "Using sdkmanager: $SDKMANAGER"
-          if [ -z "$SDKMANAGER" ]; then echo "sdkmanager not found!"; find / -iname "sdkmanager" -type f 2>/dev/null; exit 1; fi
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-          echo "SDKMANAGER_DIR=$(dirname "$SDKMANAGER")" >> "$GITHUB_ENV"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -34,7 +33,27 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+        id: build
+        run: |
+          set +e
+          gradle assembleDebug --no-daemon --stacktrace > build-log.txt 2>&1
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          tail -n 400 build-log.txt
+
+      - name: Save build log to repo
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mkdir -p ci-logs
+          cp build-log.txt "ci-logs/build-log-${GITHUB_RUN_ID}.txt"
+          git add -f "ci-logs/build-log-${GITHUB_RUN_ID}.txt"
+          git commit -m "ci: build log for run ${GITHUB_RUN_ID} [skip ci]" || echo "nothing to commit"
+          git push || echo "push failed"
+
+      - name: Fail job if build failed
+        if: steps.build.outputs.exit != '0'
+        run: exit 1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
