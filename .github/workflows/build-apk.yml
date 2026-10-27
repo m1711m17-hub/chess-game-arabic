@@ -55,6 +55,16 @@ jobs:
         if: steps.build.outputs.exit != '0'
         run: exit 1
 
+      - name: Commit APK to repo (so it can be fetched without blob storage)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mkdir -p releases
+          cp app/build/outputs/apk/debug/app-debug.apk releases/chess-debug.apk
+          git add -f releases/chess-debug.apk
+          git commit -m "ci: publish built APK (run ${GITHUB_RUN_ID}) [skip ci]" || echo "nothing to commit"
+          git push || echo "push failed"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
