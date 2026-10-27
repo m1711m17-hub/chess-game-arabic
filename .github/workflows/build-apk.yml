@@ -19,8 +19,14 @@ jobs:
 
       - name: Accept Android SDK licenses & install platform/build-tools
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          SDKMANAGER=$(find "$ANDROID_HOME" "$ANDROID_SDK_ROOT" /usr/local/lib/android/sdk -name sdkmanager -type f 2>/dev/null | sort -r | head -1)
+          echo "Using sdkmanager: $SDKMANAGER"
+          if [ -z "$SDKMANAGER" ]; then echo "sdkmanager not found!"; find / -iname "sdkmanager" -type f 2>/dev/null; exit 1; fi
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          echo "SDKMANAGER_DIR=$(dirname "$SDKMANAGER")" >> "$GITHUB_ENV"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
