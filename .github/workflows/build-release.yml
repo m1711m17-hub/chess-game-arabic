@@ -1,0 +1,73 @@
+name: Build Signed Release (AAB for Play Store)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Accept Android SDK licenses & install platform/build-tools
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME" "$ANDROID_SDK_ROOT" /usr/local/lib/android/sdk -name sdkmanager -type f 2>/dev/null | sort -r | head -1)
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Decode keystore
+        run: |
+          echo "${{ secrets.RELEASE_KEYSTORE_B64 }}" | base64 -d > "${{ runner.temp }}/release.keystore"
+
+      - name: Build signed AAB + APK
+        id: build
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set +e
+          gradle bundleRelease assembleRelease --no-daemon --stacktrace > build-log.txt 2>&1
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          tail -n 400 build-log.txt
+
+      - name: Save build log to repo
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mkdir -p ci-logs
+          cp build-log.txt "ci-logs/release-log-${GITHUB_RUN_ID}.txt"
+          git add -f "ci-logs/release-log-${GITHUB_RUN_ID}.txt"
+          git commit -m "ci: release build log for run ${GITHUB_RUN_ID} [skip ci]" || echo "nothing to commit"
+          git push || echo "push failed"
+
+      - name: Fail job if build failed
+        if: steps.build.outputs.exit != '0'
+        run: exit 1
+
+      - name: Commit signed AAB/APK to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mkdir -p releases
+          cp app/build/outputs/bundle/release/app-release.aab releases/chess-release.aab
+          cp app/build/outputs/apk/release/app-release.apk releases/chess-release.apk
+          git add -f releases/chess-release.aab releases/chess-release.apk
+          git commit -m "ci: publish signed release AAB/APK (run ${GITHUB_RUN_ID}) [skip ci]" || echo "nothing to commit"
+          git push || echo "push failed"
