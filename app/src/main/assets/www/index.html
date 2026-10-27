@@ -83,6 +83,23 @@
   .seg button{border-radius:0; margin:0; flex:1;}
   .seg button.active{background:var(--accent); color:#fff;}
   .modal p{color:var(--muted); font-size:.9rem; margin:4px 0 12px;}
+
+  .field{width:100%; margin-top:10px;}
+  .field label{display:block; font-size:.82rem; color:var(--muted); margin-bottom:5px; text-align:right;}
+  .field input{
+    width:100%; background:var(--panel2); border:1px solid #3a3a46; border-radius:10px;
+    color:var(--text); padding:10px 12px; font-size:1rem; text-align:center; direction:ltr;
+  }
+  .field input:focus{outline:2px solid var(--accent); border-color:var(--accent);}
+  .online-status{font-size:.88rem; color:var(--muted); margin:10px 0 2px; min-height:1.3em;}
+  .online-status.ok{color:#6cae55;}
+  .online-status.err{color:#e05858;}
+  .dot-spin{display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--accent); margin-inline-end:6px; animation:pulse 1s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .badge-online{
+    display:inline-flex; align-items:center; gap:5px; font-size:.75rem; color:var(--accent);
+    background:#4f8cff22; border-radius:20px; padding:3px 10px; margin-top:4px;
+  }
 </style>
 </head>
 <body>
@@ -97,6 +114,7 @@
 <div class="controls">
   <button id="btnUndo">↩ تراجع</button>
   <button id="btnFlip">⟲ قلب اللوحة</button>
+  <button id="btnOnline">🌐 أونلاين</button>
   <button id="btnNew" class="primary">♟ لعبة جديدة</button>
 </div>
 
@@ -128,6 +146,26 @@
   </div>
 </div>
 
+<!-- Online play modal -->
+<div class="overlay" id="onlineOverlay">
+  <div class="modal">
+    <h3>لعب أونلاين مع صديق</h3>
+    <p>اكتب أي اسم غرفة متل ما حدا بفهمه (مثلاً: ahmad-sami) واتفقوا عليه مع صاحبك — واحد يضغط "استضافة" والتاني يكتب نفس الاسم بالظبط ويضغط "انضمام".</p>
+    <div class="field">
+      <label for="roomInput">اسم الغرفة</label>
+      <input type="text" id="roomInput" placeholder="مثال: ahmad-sami" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </div>
+    <div class="menu-row">
+      <button class="primary" id="btnHost">📡 استضافة</button>
+      <button id="btnJoin">🔗 انضمام</button>
+    </div>
+    <div class="online-status" id="onlineStatus"></div>
+    <div class="menu-row">
+      <button id="btnOnlineCancel">رجوع</button>
+    </div>
+  </div>
+</div>
+
 <!-- Promotion modal -->
 <div class="overlay" id="promoOverlay">
   <div class="modal">
@@ -149,6 +187,7 @@
 </div>
 
 <script src="engine.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 (function(){
   'use strict';
@@ -157,6 +196,150 @@
 
   var state, history, selected, legalForSel, lastMove, flipped, humanColor, aiDepth, aiThinking;
   var DIFFS = { 1:{depth:2,time:400,noise:40}, 2:{depth:3,time:700,noise:15}, 3:{depth:4,time:1200,noise:0}, 4:{depth:5,time:2200,noise:0} };
+
+  // ---- online play (WebRTC via PeerJS, no server of our own) ----
+  var mode = 'ai';           // 'ai' | 'online'
+  var peer = null, conn = null, onlineColor = null, onlineRoom = null;
+  var ROOM_PREFIX = 'arabic-chess-room-';
+
+  function sanitizeRoom(name){
+    return (name || '').trim().toLowerCase()
+      .replace(/[^a-z0-9؀-ۿ_-]+/g, '-')
+      .replace(/-+/g, '-').replace(/^-|-$/g, '');
+  }
+
+  function setOnlineStatus(text, kind){
+    var el = document.getElementById('onlineStatus');
+    el.textContent = text || '';
+    el.className = 'online-status' + (kind ? ' ' + kind : '');
+  }
+
+  function teardownPeer(){
+    if (conn) { try { conn.close(); } catch(e){} conn = null; }
+    if (peer) { try { peer.destroy(); } catch(e){} peer = null; }
+    onlineColor = null; onlineRoom = null;
+  }
+
+  function openOnlineModal(){
+    teardownPeer();
+    setOnlineStatus('');
+    document.getElementById('menuOverlay').classList.remove('show');
+    document.getElementById('overOverlay').classList.remove('show');
+    document.getElementById('onlineOverlay').classList.add('show');
+  }
+
+  function hostGame(){
+    var raw = document.getElementById('roomInput').value;
+    var room = sanitizeRoom(raw);
+    if (!room){ setOnlineStatus('اكتب اسم غرفة الأول', 'err'); return; }
+    teardownPeer();
+    onlineRoom = room;
+    setOnlineStatus('جاري فتح الغرفة...');
+    peer = new Peer(ROOM_PREFIX + room);
+    peer.on('open', function(){
+      setOnlineStatus('بانتظار صديقك ينضم بنفس الاسم "' + room + '"...');
+    });
+    peer.on('connection', function(c){
+      if (conn) { c.close(); return; } // room already has a guest
+      conn = c;
+      wireConnection(conn, 'w');
+    });
+    peer.on('error', function(err){
+      if (err && err.type === 'unavailable-id'){
+        setOnlineStatus('اسم الغرفة محجوز هلق، جرب اسم تاني.', 'err');
+      } else {
+        setOnlineStatus('صار خطأ بالاتصال: ' + (err && err.type || err), 'err');
+      }
+    });
+  }
+
+  function joinGame(){
+    var raw = document.getElementById('roomInput').value;
+    var room = sanitizeRoom(raw);
+    if (!room){ setOnlineStatus('اكتب اسم الغرفة اللي ضغط عليها صاحبك "استضافة"', 'err'); return; }
+    teardownPeer();
+    onlineRoom = room;
+    setOnlineStatus('جاري الاتصال بالغرفة "' + room + '"...');
+    peer = new Peer();
+    peer.on('open', function(){
+      var c = peer.connect(ROOM_PREFIX + room, { reliable: true });
+      conn = c;
+      wireConnection(conn, 'b');
+    });
+    peer.on('error', function(err){
+      if (err && err.type === 'peer-unavailable'){
+        setOnlineStatus('ما في حدا مستضيف بهاد الاسم هلق. تأكد صاحبك ضغط "استضافة" بنفس الاسم بالظبط.', 'err');
+      } else {
+        setOnlineStatus('صار خطأ بالاتصال: ' + (err && err.type || err), 'err');
+      }
+    });
+  }
+
+  function wireConnection(c, myColor){
+    c.on('open', function(){
+      onlineColor = myColor;
+      document.getElementById('onlineOverlay').classList.remove('show');
+      startOnlineGame(myColor);
+    });
+    c.on('data', function(data){
+      onOnlineData(data);
+    });
+    c.on('close', function(){
+      if (mode === 'online'){
+        setStatusText('انقطع الاتصال مع صاحبك.', 'check');
+      }
+    });
+    c.on('error', function(){
+      if (mode === 'online'){
+        setStatusText('صار خطأ بالاتصال مع صاحبك.', 'check');
+      }
+    });
+  }
+
+  function onOnlineData(data){
+    if (!data || data.type !== 'move') return;
+    var mv = { from: data.from, to: data.to };
+    if (data.promo) mv.promo = data.promo;
+    if (data.flag) mv.flag = data.flag;
+    var legal = E.legalMoves(state);
+    var real = legal.filter(function(m){
+      return m.from===mv.from && m.to===mv.to && (m.promo||null)===(mv.promo||null);
+    })[0];
+    if (!real) return; // out-of-sync / illegal, ignore defensively
+    var san = E.toSAN(state, real);
+    state = E.applyMove(state, real);
+    history.push(san);
+    lastMove = real;
+    selected = null; legalForSel = null;
+    render();
+  }
+
+  function sendOnlineMove(mv){
+    if (conn && conn.open){
+      conn.send({ type:'move', from: mv.from, to: mv.to, promo: mv.promo || null, flag: mv.flag || null });
+    }
+  }
+
+  function startOnlineGame(myColor){
+    mode = 'online';
+    humanColor = myColor;
+    state = E.initialState();
+    history = [];
+    selected = null; legalForSel = null; lastMove = null; aiThinking = false;
+    flipped = myColor === 'b';
+    buildBoard();
+    render();
+  }
+
+  function leaveOnline(){
+    teardownPeer();
+    mode = 'ai';
+  }
+
+  function setStatusText(text, cls){
+    statusEl.className = 'status' + (cls ? ' ' + cls : '');
+    statusEl.textContent = text;
+  }
 
   var boardEl = document.getElementById('board');
   var statusEl = document.getElementById('status');
@@ -242,14 +425,21 @@
       return;
     }
     var turnTxt = state.turn==='w' ? 'الأبيض' : 'الأسود';
-    var who = state.turn===humanColor ? 'دورك' : 'دور الكمبيوتر';
+    var oppLabel = mode === 'online' ? 'دور صاحبك' : 'دور الكمبيوتر';
+    var who = state.turn===humanColor ? 'دورك' : oppLabel;
+    var onlineTag = mode === 'online' ? ' [أونلاين — إنت ' + (humanColor==='w'?'الأبيض':'الأسود') + ']' : '';
+    if (mode === 'online' && conn && !conn.open){
+      statusEl.classList.add('check');
+      statusEl.textContent = 'انقطع الاتصال مع صاحبك.';
+      return;
+    }
     if (E.inCheck(state)){
       statusEl.classList.add('check');
-      statusEl.textContent = 'كش! دور ' + turnTxt + ' (' + who + ')';
+      statusEl.textContent = 'كش! دور ' + turnTxt + ' (' + who + ')' + onlineTag;
     } else if (aiThinking) {
       statusEl.textContent = 'الكمبيوتر يفكر...';
     } else {
-      statusEl.textContent = 'دور ' + turnTxt + ' — ' + who;
+      statusEl.textContent = 'دور ' + turnTxt + ' — ' + who + onlineTag;
     }
   }
 
@@ -279,6 +469,7 @@
     var st = E.status(state);
     if (st.over) return;
     if (state.turn !== humanColor) return;
+    if (mode === 'online' && !(conn && conn.open)) return;
 
     var piece = state.board[idx];
     if (selected !== null){
@@ -317,6 +508,7 @@
 
   function commitMove(mv){
     var san = E.toSAN(state, mv);
+    if (mode === 'online') sendOnlineMove(mv);
     state = E.applyMove(state, mv);
     history.push(san);
     lastMove = mv;
@@ -341,6 +533,7 @@
   }
 
   function maybeAIMove(){
+    if (mode === 'online') return;
     var st = E.status(state);
     if (st.over) return;
     if (state.turn === humanColor) return;
@@ -403,14 +596,26 @@
   });
 
   document.getElementById('btnNew').addEventListener('click', function(){
+    leaveOnline();
     document.getElementById('menuOverlay').classList.add('show');
   });
   document.getElementById('btnPlayAgain').addEventListener('click', function(){
+    leaveOnline();
     document.getElementById('overOverlay').classList.remove('show');
     document.getElementById('menuOverlay').classList.add('show');
   });
   document.getElementById('btnClose').addEventListener('click', function(){
     document.getElementById('overOverlay').classList.remove('show');
+  });
+
+  document.getElementById('btnOnline').addEventListener('click', function(){
+    openOnlineModal();
+  });
+  document.getElementById('btnHost').addEventListener('click', hostGame);
+  document.getElementById('btnJoin').addEventListener('click', joinGame);
+  document.getElementById('btnOnlineCancel').addEventListener('click', function(){
+    teardownPeer();
+    document.getElementById('onlineOverlay').classList.remove('show');
   });
 
   document.getElementById('btnFlip').addEventListener('click', function(){
@@ -420,6 +625,7 @@
   });
 
   document.getElementById('btnUndo').addEventListener('click', function(){
+    if (mode === 'online'){ setStatusText('ما بتقدر تتراجع بوضع الأونلاين.', 'check'); setTimeout(render, 1200); return; }
     if (aiThinking || !history.length) return;
     // undo last human+ai pair (or single if only one made)
     var movesToUndo = (history.length % 2 === 0) ? 2 : 1;
